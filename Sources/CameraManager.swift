@@ -1993,9 +1993,9 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     }
     
     fileprivate func _inStrongSelf(_ task: () -> Void) {
-        strongSelf = self
+        strongSelfWraper = self
         task()
-        strongSelf = nil
+        strongSelfWraper = nil
     }
     
     deinit {
