@@ -377,21 +377,8 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     /// Real device orientation from DeviceMotion
     fileprivate var deviceOrientation: UIDeviceOrientation = .portrait
     
-    fileprivate var strongSelfLock = NSLock()
-    fileprivate var strongSelf: CameraManager?
-    fileprivate var strongSelfWraper: CameraManager? {
-        get {
-            strongSelfLock.lock()
-            defer { strongSelfLock.unlock() }
-            return strongSelf
-            }
-        set {
-            strongSelfLock.lock()
-            defer { strongSelfLock.unlock() }
-            strongSelf = newValue
-        }
-            
-    }
+    // 相机全局串行队列
+    fileprivate static let cameraGlobalSerialQueue: DispatchQueue = DispatchQueue(label: "com.cameraManager.sdk.serial.queue")
     
     
     // MARK: - CameraManager
@@ -471,7 +458,9 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
      Stops running capture session but all setup devices, inputs and outputs stay for further reuse.
      */
     open func stopCaptureSession() {
-        captureSession?.stopRunning()
+        _inGlobalSerialQueue {
+            self.captureSession?.stopRunning()
+        }
         _stopFollowingDeviceOrientation()
     }
     
@@ -481,7 +470,7 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     open func resumeCaptureSession() {
         if let validCaptureSession = captureSession {
             if !validCaptureSession.isRunning, cameraIsSetup {
-                sessionQueue.async {
+                CameraManager.cameraGlobalSerialQueue.async {
                     validCaptureSession.startRunning()
                     self._startFollowingDeviceOrientation()
                 }
@@ -506,6 +495,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
      */
     open func stopAndRemoveCaptureSession() {
         stopCaptureSession()
+        _removeCaptureSession()
+    }
+    
+    func _removeCaptureSession() {
         let oldAnimationValue = animateCameraDeviceChange
         animateCameraDeviceChange = false
         cameraDevice = .back
@@ -910,7 +903,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     // MARK: - AVCaptureFileOutputRecordingDelegate
     
     public func fileOutput(_: AVCaptureFileOutput, didStartRecordingTo _: URL, from _: [AVCaptureConnection]) {
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             captureSession?.beginConfiguration()
             if flashMode != .off {
                 _updateIlluminationMode(flashMode)
@@ -1290,7 +1286,7 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
         _setupVideoConnection()
         
         if let captureSession = captureSession, captureSession.canAddOutput(newMovieOutput) {
-            _inStrongSelf {
+            _inGlobalSerialQueue {
                 captureSession.beginConfiguration()
                 captureSession.addOutput(newMovieOutput)
                 captureSession.commitConfiguration()
@@ -1325,7 +1321,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
         }
         let newStillImageOutput = AVCaptureStillImageOutput()
         stillImageOutput = newStillImageOutput
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             if let captureSession = captureSession,
                 captureSession.canAddOutput(newStillImageOutput) {
                 captureSession.beginConfiguration()
@@ -1496,7 +1495,7 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
         captureSession = AVCaptureSession()
         
         sessionQueue.async {
-            self._inStrongSelf {
+            self._inGlobalSerialQueue {
                 if let validCaptureSession = self.captureSession {
                     validCaptureSession.beginConfiguration()
                     validCaptureSession.sessionPreset = AVCaptureSession.Preset.high
@@ -1611,7 +1610,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     }
     
     fileprivate func _setupOutputMode(_ newCameraOutputMode: CameraOutputMode, oldCameraOutputMode: CameraOutputMode?) {
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             captureSession?.beginConfiguration()
             
             if let cameraOutputToRemove = oldCameraOutputMode {
@@ -1832,7 +1834,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     }
     
     fileprivate func _updateCameraDevice(_: CameraDevice) {
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             if let validCaptureSession = captureSession {
                 validCaptureSession.beginConfiguration()
                 defer { validCaptureSession.commitConfiguration() }
@@ -1871,7 +1876,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     }
     
     fileprivate func _updateTorch(_: CameraFlashMode) {
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             captureSession?.beginConfiguration()
             defer { captureSession?.commitConfiguration() }
             for captureDevice in AVCaptureDevice.videoDevices {
@@ -1892,7 +1900,10 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
     }
     
     fileprivate func _updateFlash(_ flashMode: CameraFlashMode) {
-        _inStrongSelf {
+        _inGlobalSerialQueue {
+            _inner()
+        }
+        func _inner() {
             captureSession?.beginConfiguration()
             defer { captureSession?.commitConfiguration() }
             for captureDevice in AVCaptureDevice.videoDevices {
@@ -1948,13 +1959,13 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
                 }
             }
             
-            _inStrongSelf {
+            _inGlobalSerialQueue {
                 if validCaptureSession.canSetSessionPreset(sessionPreset) {
                     validCaptureSession.beginConfiguration()
                     validCaptureSession.sessionPreset = sessionPreset
                     validCaptureSession.commitConfiguration()
                 } else {
-                    _show(NSLocalizedString("Preset not supported", comment: ""), message: NSLocalizedString("Camera preset not supported. Please try another one.", comment: ""))
+                    self._show(NSLocalizedString("Preset not supported", comment: ""), message: NSLocalizedString("Camera preset not supported. Please try another one.", comment: ""))
                 }
             }
         } else {
@@ -1992,15 +2003,22 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
         }
     }
     
-    fileprivate func _inStrongSelf(_ task: () -> Void) {
-        strongSelfWraper = self
-        task()
-        strongSelfWraper = nil
+    fileprivate func _inGlobalSerialQueue(_ task: @escaping () -> Void) {
+        let currentQueueLabel = String(cString: __dispatch_queue_get_label(nil))
+        if currentQueueLabel == "com.cameraManager.sdk.serial.queue" || Thread.isMainThread {
+            CameraManager.cameraGlobalSerialQueue.async {
+                task()
+            }
+        } else {
+            CameraManager.cameraGlobalSerialQueue.sync {
+                task()
+            }
+        }
     }
     
     deinit {
         _stopFollowingDeviceOrientation()
-        stopAndRemoveCaptureSession()
+        _removeCaptureSession()
     }
 }
 
