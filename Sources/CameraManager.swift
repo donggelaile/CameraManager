@@ -1053,30 +1053,41 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
             let pointInPreviewLayer = view.layer.convert(recognizer.location(in: view), to: validPreviewLayer)
             let pointOfInterest = validPreviewLayer.captureDevicePointConverted(fromLayerPoint: pointInPreviewLayer)
             
-            do {
-                try validDevice.lockForConfiguration()
-                
-                _showFocusRectangleAtPoint(pointInPreviewLayer, inLayer: validPreviewLayer)
-                
-                if validDevice.isFocusPointOfInterestSupported {
-                    validDevice.focusPointOfInterest = pointOfInterest
+            _showFocusRectangleAtPoint(pointInPreviewLayer, inLayer: validPreviewLayer)
+            
+            let preferredFocusMode: AVCaptureDevice.FocusMode = validDevice.isFocusModeSupported(.autoFocus) ? .autoFocus : focusMode
+            let preferredExposureMode: AVCaptureDevice.ExposureMode = validDevice.isExposureModeSupported(.autoExpose) ? .autoExpose : exposureMode
+            
+            CameraManager.cameraGlobalSerialQueue.async {
+                do {
+                    try validDevice.lockForConfiguration()
+                    
+                    if validDevice.isSmoothAutoFocusSupported {
+                        validDevice.isSmoothAutoFocusEnabled = true
+                    }
+
+                    if validDevice.isFocusPointOfInterestSupported {
+                        validDevice.focusPointOfInterest = pointOfInterest
+                    }
+                    if validDevice.isExposurePointOfInterestSupported {
+                        validDevice.exposurePointOfInterest = pointOfInterest
+                    }
+                    
+                    if validDevice.isFocusModeSupported(preferredFocusMode) {
+                        validDevice.focusMode = preferredFocusMode
+                    }
+                    if validDevice.isExposureModeSupported(preferredExposureMode) {
+                        validDevice.exposureMode = preferredExposureMode
+                    }
+                    
+                    if validDevice.focusMode == .autoFocus || validDevice.focusMode == .continuousAutoFocus {
+                        validDevice.isSubjectAreaChangeMonitoringEnabled = true
+                    }
+                    
+                    validDevice.unlockForConfiguration()
+                } catch {
+                    print(error)
                 }
-                
-                if validDevice.isExposurePointOfInterestSupported {
-                    validDevice.exposurePointOfInterest = pointOfInterest
-                }
-                
-                if validDevice.isFocusModeSupported(focusMode) {
-                    validDevice.focusMode = focusMode
-                }
-                
-                if validDevice.isExposureModeSupported(exposureMode) {
-                    validDevice.exposureMode = exposureMode
-                }
-                
-                validDevice.unlockForConfiguration()
-            } catch {
-                print(error)
             }
         }
     }
@@ -1498,14 +1509,23 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
             self._inGlobalSerialQueue {
                 if let validCaptureSession = self.captureSession {
                     validCaptureSession.beginConfiguration()
-                    validCaptureSession.sessionPreset = AVCaptureSession.Preset.high
+                    
+                    var sessionPreset = self.cameraOutputQuality
+                    if self.cameraOutputQuality == .high {
+                        if self.cameraOutputMode == .stillImage {
+                            sessionPreset = AVCaptureSession.Preset.photo
+                        } else {
+                            sessionPreset = AVCaptureSession.Preset.high
+                        }
+                    }
+                    validCaptureSession.sessionPreset = sessionPreset
+                    
                     self._updateCameraDevice(self.cameraDevice)
                     self._setupOutputs()
-                    self._setupOutputMode(self.cameraOutputMode, oldCameraOutputMode: nil)
+//                    self._setupOutputMode(self.cameraOutputMode, oldCameraOutputMode: nil)
                     self._setupPreviewLayer()
                     validCaptureSession.commitConfiguration()
                     self._updateIlluminationMode(self.flashMode)
-                    self._updateCameraQualityMode(self.cameraOutputQuality)
                     validCaptureSession.startRunning()
                     self._startFollowingDeviceOrientation()
                     self.cameraIsSetup = true
@@ -2023,9 +2043,49 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
 }
 
 private extension AVCaptureDevice {
-    static var videoDevices: [AVCaptureDevice] {
-        return AVCaptureDevice.devices(for: AVMediaType.video)
-    }
+    static let videoDevices: [AVCaptureDevice] = {
+        if #available(iOS 10.2, *) {
+            var orderedDevices: [AVCaptureDevice] = []
+            
+            // Prioritize Triple Camera (iPhone 11 Pro+, 13 Pro+ for macro)
+            if #available(iOS 13.0, *) {
+                let tripleSession = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInTripleCamera], mediaType: .video, position: .back)
+                orderedDevices.append(contentsOf: tripleSession.devices)
+                
+                let dualWideSession = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInDualWideCamera], mediaType: .video, position: .back)
+                orderedDevices.append(contentsOf: dualWideSession.devices)
+            }
+            
+            // Dual Camera (iPhone 7 Plus, 8 Plus, X, XS)
+            let dualSession = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInDualCamera], mediaType: .video, position: .back)
+            orderedDevices.append(contentsOf: dualSession.devices)
+            
+            // Wide Angle (Standard for all)
+            let wideSession = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: .unspecified)
+            orderedDevices.append(contentsOf: wideSession.devices)
+            
+            // TrueDepth (Front for X+)
+            if #available(iOS 11.1, *) {
+                let trueDepthSession = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInTrueDepthCamera], mediaType: .video, position: .front)
+                orderedDevices.append(contentsOf: trueDepthSession.devices)
+            }
+            
+            // Deduplicate devices based on uniqueID
+            var uniqueDevices: [AVCaptureDevice] = []
+            var seenIDs = Set<String>()
+            
+            for device in orderedDevices {
+                if !seenIDs.contains(device.uniqueID) {
+                    uniqueDevices.append(device)
+                    seenIDs.insert(device.uniqueID)
+                }
+            }
+            
+            return uniqueDevices
+        } else {
+            return AVCaptureDevice.devices(for: AVMediaType.video)
+        }
+    }()
 }
 
 extension PHPhotoLibrary {
