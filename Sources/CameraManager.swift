@@ -1053,41 +1053,30 @@ open class CameraManager: NSObject, AVCaptureFileOutputRecordingDelegate, UIGest
             let pointInPreviewLayer = view.layer.convert(recognizer.location(in: view), to: validPreviewLayer)
             let pointOfInterest = validPreviewLayer.captureDevicePointConverted(fromLayerPoint: pointInPreviewLayer)
             
-            _showFocusRectangleAtPoint(pointInPreviewLayer, inLayer: validPreviewLayer)
-            
-            let preferredFocusMode: AVCaptureDevice.FocusMode = validDevice.isFocusModeSupported(.autoFocus) ? .autoFocus : focusMode
-            let preferredExposureMode: AVCaptureDevice.ExposureMode = validDevice.isExposureModeSupported(.autoExpose) ? .autoExpose : exposureMode
-            
-            CameraManager.cameraGlobalSerialQueue.async {
-                do {
-                    try validDevice.lockForConfiguration()
-                    
-                    if validDevice.isSmoothAutoFocusSupported {
-                        validDevice.isSmoothAutoFocusEnabled = true
-                    }
-
-                    if validDevice.isFocusPointOfInterestSupported {
-                        validDevice.focusPointOfInterest = pointOfInterest
-                    }
-                    if validDevice.isExposurePointOfInterestSupported {
-                        validDevice.exposurePointOfInterest = pointOfInterest
-                    }
-                    
-                    if validDevice.isFocusModeSupported(preferredFocusMode) {
-                        validDevice.focusMode = preferredFocusMode
-                    }
-                    if validDevice.isExposureModeSupported(preferredExposureMode) {
-                        validDevice.exposureMode = preferredExposureMode
-                    }
-                    
-                    if validDevice.focusMode == .autoFocus || validDevice.focusMode == .continuousAutoFocus {
-                        validDevice.isSubjectAreaChangeMonitoringEnabled = true
-                    }
-                    
-                    validDevice.unlockForConfiguration()
-                } catch {
-                    print(error)
+            do {
+                try validDevice.lockForConfiguration()
+                
+                _showFocusRectangleAtPoint(pointInPreviewLayer, inLayer: validPreviewLayer)
+                
+                if validDevice.isFocusPointOfInterestSupported {
+                    validDevice.focusPointOfInterest = pointOfInterest
                 }
+                
+                if validDevice.isExposurePointOfInterestSupported {
+                    validDevice.exposurePointOfInterest = pointOfInterest
+                }
+                
+                if validDevice.isFocusModeSupported(focusMode) {
+                    validDevice.focusMode = focusMode
+                }
+                
+                if validDevice.isExposureModeSupported(exposureMode) {
+                    validDevice.exposureMode = exposureMode
+                }
+                
+                validDevice.unlockForConfiguration()
+            } catch {
+                print(error)
             }
         }
     }
